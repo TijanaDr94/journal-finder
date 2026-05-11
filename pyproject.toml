@@ -1,0 +1,6 @@
+[project]
+name = "journal-finder"
+version = "0.1.0"
+description = "MDPI Journal Finder API"
+requires-python = ">=3.11"
+dependencies = []
