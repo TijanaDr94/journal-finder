@@ -4,11 +4,12 @@ import logging
 import time
 import uuid
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-
+from app.schemas import FindJournalRequest, FindJournalResponse
+from app.orchestrator import rank_journals
 
 logging.basicConfig(
     level=logging.INFO,
@@ -61,3 +62,32 @@ async def health():
     """Liveness probe."""
     return {"status": "ok", "version": settings.app_version}
 
+
+@app.get("/config", tags=["Meta"])
+async def config_info():
+    """Returns active scoring configuration."""
+    return {
+        "scoring_mode": settings.scoring_mode,
+        "llm_available": bool(settings.openai_api_key),
+        "openai_model": settings.openai_model if settings.openai_api_key else None,
+    }
+
+
+@app.post(
+    "/find-journal",
+    response_model=FindJournalResponse,
+    summary="Rank MDPI journals",
+    tags=["Journal Finder"],
+    responses={
+        200: {"description": "Ranked list of journals with relevance scores."},
+        422: {"description": "Validation error (abstract too short or malformed)."},
+        500: {"description": "Internal scoring error."},
+    },
+)
+async def find_journal(body: FindJournalRequest, request: Request) -> FindJournalResponse:
+    """Ranks MDPI journals for the provided manuscript abstract and title."""
+    try:
+        return await rank_journals(title=body.title, abstract=body.abstract)
+    except Exception as exc:
+        logger.exception("Scoring error (request_id=%s)", request.state.request_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
