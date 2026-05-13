@@ -115,8 +115,8 @@ def score_bm25(title: str, abstract: str) -> list[dict]:
     final_score = _normalise(weighted_score)
 
     results = [
-        {"journal_id": journal.id, "raw_score": float(final_score[index])}
+        {"journal_id": journal.id, "score": float(final_score[index])}
         for index, journal in enumerate(JOURNALS)
     ]
-    results.sort(key=lambda x: x["raw_score"], reverse=True)
+    results.sort(key=lambda x: x["score"], reverse=True)
     return results
