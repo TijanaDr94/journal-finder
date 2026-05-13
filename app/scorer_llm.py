@@ -36,12 +36,12 @@ based on how well their scope matches the content of the manuscript.
 Rules:
 - Score each journal 0-100 (higher = better fit).
 - Scores must be distinct (no ties).
-- Scores must span at least 20 points between the highest and lowest.
+- Scores must reflect actual topical relevance, a poor fit should score below 30,
+  a strong fit above 70. Do not distribute scores evenly across the range.
 - Base scores solely on topical relevance to each journal's scope.
 - Provide a 1-2 sentence justification per journal.
 - Return exactly one entry per provided journal - no duplicates, no omissions.
 """
-
 
 _JOURNAL_IDS: list[str] = [journal.id for journal in JOURNALS]
 _EXPECTED_IDS: set[str] = set(_JOURNAL_IDS)
