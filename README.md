@@ -14,6 +14,13 @@ A REST API that ranks MDPI journals for a given title and abstract of a manuscri
 
 ## How to run code
 
+### Local (requires Python 3.11+ and uv)
+
+```bash
+uv sync
+uv run uvicorn app.main:app --reload
+```
+
 ### Docker Compose
 
 ```bash
@@ -32,12 +39,12 @@ docker build -t journal-finder:latest .
 docker run -p 8000:8000 -e OPENAI_API_KEY=sk-... journal-finder:latest
 ```
 
-### Local (requires Python 3.11+ and uv)
-
-```bash
-uv sync
-uv run uvicorn app.main:app --reload
-```
-
 The service starts at **http://localhost:8000**.
 Docs with endpoints: **http://localhost:8000/docs**
+
+
+## Running Tests
+
+```bash
+uv run pytest tests/ -v
+```
