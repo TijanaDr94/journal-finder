@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     scoring_mode: Literal["hybrid", "bm25", "llm"] = "hybrid"
     llm_temperature: float = 0.0
     llm_max_tokens: int = 800
+    # used in hybrid mode: final_score = hybrid_alpha * bm25_score + (1 - hybrid_alpha) * llm_score
+    # 0.0 = pure LLM, 1.0 = pure BM25, 0.3 = LLM-dominant
+    hybrid_alpha: float = 0.3
     cache_max_size: int = 256
     cors_origins: str = "*"
 

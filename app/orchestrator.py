@@ -1,12 +1,16 @@
 """
-Hybrid scorer: BM25 for the initial ranking, then optional LLM reranking.
+Scoring orchestrator: BM25, LLM, or a BM25+LLM blend.
 
-Flow:
-- Build a cache key from (mode, title, abstract) and return cached results when available.
-- Use BM25 to generate a fast baseline ranking.
-- If OpenAI is configured and LLM scoring is enabled, rerank the journals with the LLM.
-- If the LLM call fails, fall back to the BM25 results and log the error.
-- Cache successful responses, but never cache BM25 fallback results caused by a temporary LLM outage.
+Modes:
+- bm25:   BM25 only.
+- llm:    LLM only, BM25 fallback if the LLM call fails or the key is missing.
+- hybrid: BM25 always runs. If an OpenAI key is configured, the LLM also runs and the two score sets are blended via
+         `hybrid_alpha`: final = hybrid_alpha * bm25_score + (1 - hybrid_alpha) * llm_score
+          BM25 fallback if the LLM call fails.
+
+Caching:
+- Successful responses are cached by sha256(mode + title + abstract).
+- Fallback BM25 results (when the requested mode was llm/hybrid) are not cached
 """
 
 import hashlib
@@ -62,6 +66,71 @@ def _llm_available() -> bool:
     return bool(settings.openai_api_key)
 
 
+def _blend(
+    bm25_results: list[dict],
+    llm_results: list[dict],
+    alpha: float,
+) -> list[dict]:
+    """
+    Combine BM25 and LLM scores using equation final = alpha * bm25 + (1 - alpha) * llm.
+    Results are returned sorted descending by the blended score.
+    """
+    bm25_map = {item["journal_id"]: item["score"] for item in bm25_results}
+    blended = [
+        {
+            "journal_id": item["journal_id"],
+            "score": round(
+                alpha * bm25_map.get(item["journal_id"], 0.0)
+                + (1 - alpha) * item["score"],
+                4,
+            ),
+            "reasoning": item["reasoning"],
+        }
+        for item in llm_results
+    ]
+    blended.sort(key=lambda x: x["score"], reverse=True)
+    return blended
+
+
+async def _score(title: str, abstract: str) -> tuple[list[dict], str, str | None]:
+    """Run the scoring pipeline and return (scored_results, actual_mode, model_used)."""
+    mode = settings.scoring_mode
+
+    if mode == "bm25":
+        return score_bm25(title, abstract), "bm25", None
+
+    if not _llm_available():
+        logger.info(
+            "OPENAI_API_KEY not set; using BM25 scoring. "
+            "Set the key to enable LLM reranking."
+        )
+        return score_bm25(title, abstract), "bm25", None
+
+    if mode == "llm":
+        try:
+            llm_scored = await score_llm(title, abstract)
+            return llm_scored, "llm", settings.openai_model
+        except RuntimeError as exc:
+            logger.warning("LLM scoring failed, falling back to BM25: %s", exc)
+            return score_bm25(title, abstract), "bm25", None
+
+    bm25_scored = score_bm25(title, abstract)
+    try:
+        llm_scored = await score_llm(title, abstract)
+    except RuntimeError as exc:
+        logger.warning("LLM scoring failed, falling back to BM25-only: %s", exc)
+        return bm25_scored, "bm25", None
+
+    blended = _blend(bm25_scored, llm_scored, settings.hybrid_alpha)
+    logger.info(
+        "Hybrid blend complete (alpha=%.2f); top: %s (%.3f)",
+        settings.hybrid_alpha,
+        blended[0]["journal_id"],
+        blended[0]["score"],
+    )
+    return blended, "hybrid", settings.openai_model
+
+
 async def rank_journals(title: str, abstract: str) -> FindJournalResponse:
     """Main entry point for journal ranking."""
     mode = settings.scoring_mode
@@ -71,30 +140,7 @@ async def rank_journals(title: str, abstract: str) -> FindJournalResponse:
     if cached is not None:
         return cached
 
-    use_llm = _llm_available() and mode in ("hybrid", "llm")
-
-    scored: list[dict] = []
-    actual_mode: str
-    model_used: str | None = None
-
-    if use_llm:
-        try:
-            scored = await score_llm(title, abstract)
-            actual_mode = "llm" if mode == "llm" else "hybrid"
-            model_used = settings.openai_model
-            logger.info("Scored via LLM (%s)", settings.openai_model)
-        except RuntimeError as exc:
-            logger.warning("LLM scoring failed, falling back to BM25: %s", exc)
-            scored = score_bm25(title, abstract)
-            actual_mode = "bm25"
-    else:
-        if mode in ("hybrid", "llm") and not _llm_available():
-            logger.info(
-                "OPENAI_API_KEY not set; using BM25 scoring. "
-                "Set the key to enable LLM reranking."
-            )
-        scored = score_bm25(title, abstract)
-        actual_mode = "bm25"
+    scored, actual_mode, model_used = await _score(title, abstract)
 
     ranked: list[JournalScore] = []
     for rank, item in enumerate(scored, start=1):

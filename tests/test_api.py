@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.scorer_bm25 import score_bm25
+from app.orchestrator import _blend
 
 client = TestClient(app)
 
@@ -206,3 +207,55 @@ def test_bm25_all_journal_ids_known():
     results = score_bm25(title=TITLE_AI, abstract=ABSTRACT_AI)
     for result in results:
         assert result["journal_id"] in JOURNAL_MAP
+
+
+def test_blend_alpha_zero_returns_llm_scores():
+    bm25 = [
+        {"journal_id": "ai", "score": 1.0},
+        {"journal_id": "molecules", "score": 0.0},
+    ]
+    llm = [
+        {"journal_id": "molecules", "score": 1.0, "reasoning": "..."},
+        {"journal_id": "ai", "score": 0.0, "reasoning": "..."},
+    ]
+    blended = _blend(bm25, llm, alpha=0.0)
+    by_id = {entry["journal_id"]: entry["score"] for entry in blended}
+    assert by_id["molecules"] == 1.0
+    assert by_id["ai"] == 0.0
+
+
+def test_blend_alpha_one_returns_bm25_scores():
+    bm25 = [
+        {"journal_id": "ai", "score": 1.0},
+        {"journal_id": "molecules", "score": 0.0},
+    ]
+    llm = [
+        {"journal_id": "molecules", "score": 1.0, "reasoning": "..."},
+        {"journal_id": "ai", "score": 0.0, "reasoning": "..."},
+    ]
+    blended = _blend(bm25, llm, alpha=1.0)
+    by_id = {entry["journal_id"]: entry["score"] for entry in blended}
+    assert by_id["ai"] == 1.0
+    assert by_id["molecules"] == 0.0
+
+
+def test_blend_alpha_half_averages_scores():
+    bm25 = [
+        {"journal_id": "ai", "score": 1.0},
+        {"journal_id": "molecules", "score": 0.0},
+    ]
+    llm = [
+        {"journal_id": "molecules", "score": 1.0, "reasoning": "..."},
+        {"journal_id": "ai", "score": 0.0, "reasoning": "..."},
+    ]
+    blended = _blend(bm25, llm, alpha=0.5)
+    by_id = {entry["journal_id"]: entry["score"] for entry in blended}
+    assert by_id["ai"] == 0.5
+    assert by_id["molecules"] == 0.5
+
+
+def test_blend_preserves_llm_reasoning():
+    bm25 = [{"journal_id": "ai", "score": 0.5}]
+    llm = [{"journal_id": "ai", "score": 0.5, "reasoning": "transformer architecture fits"}]
+    blended = _blend(bm25, llm, alpha=0.3)
+    assert blended[0]["reasoning"] == "transformer architecture fits"
